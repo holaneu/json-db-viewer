@@ -1,11 +1,14 @@
 // Navigation Module
-function navigateToScreen(screenId) {    
-    const screens = document.querySelectorAll('.screen');
-    screens.forEach(screen => screen.classList.add('hidden'));
-    
-    const targetScreen = document.getElementById(screenId);
-    targetScreen.classList.remove('hidden');    
-}
+
+// navigation controller
+const navigation = {
+  showScreen(screenId) {
+    Object.values(dom.screens).forEach(screen => {
+      screen.classList.add('hidden');
+    });
+    dom.screens[screenId].classList.remove('hidden');
+  }
+};
 
 function show(element) {
   if (element) {
@@ -20,12 +23,17 @@ function hide(element) {
 }
 
 // DOM elements
-const domElements = {
+const dom = {
+  screens: {
+    main: document.getElementById('mainScreen'),
+    itemView: document.getElementById('itemViewScreen')
+  },
   mainScreen: {
     screen: () => document.getElementById("mainScreen"),
     mappingControls: () => document.getElementById("mappingControls"),
-    btnApplyConfiguration: () => document.getElementById("btnApplyConfiguration")
-    
+    displayFieldSelector: () => document.getElementById("displayFieldSelector"),
+    btnApplyConfiguration: () => document.getElementById("btnApplyConfiguration"),
+    results: document.getElementById("results")
   },
   itemViewScreen: {
     screen: () => document.getElementById("itemViewScreen"),
@@ -34,10 +42,10 @@ const domElements = {
 };
 
 // Event listeners
-domElements.itemViewScreen.backButton().addEventListener("click", () => {
-  navigateToScreen("mainScreen");
+dom.itemViewScreen.backButton().addEventListener("click", () => {
+  navigation.showScreen("main");
 });
-domElements.mainScreen.btnApplyConfiguration().addEventListener("click", () => {
+dom.mainScreen.btnApplyConfiguration().addEventListener("click", () => {
   applyConfiguration();
 });
 
@@ -82,13 +90,13 @@ class FileManager {
         const choice = keys.length === 1 ? keys[0] : prompt("Enter collection name:\n" + keys.join(", "));
         rawData = data.collections[choice] || [];
         
-        if (data.view_config) {
+        if (data.configs) {
           // Reset fieldMap to defaults before applying new mappings
           fieldMap = { ...defaultFieldMap };
           
           // Apply mappings if they exist, ensuring invalid fields are set to notUsed
-          if (data.view_config.controls_mapping) {
-            Object.entries(data.view_config.controls_mapping).forEach(([key, value]) => {
+          if (data.configs.controls_mapping) {
+            Object.entries(data.configs.controls_mapping).forEach(([key, value]) => {
               if (key in fieldMap) {
                 fieldMap[key] = value || labels.notUsed;  // Handle empty values
               }
@@ -96,8 +104,14 @@ class FileManager {
           }
           
           // Store selected fields if they exist
-          if (data.view_config.list_view_fields) {
-            selectedFields = [...data.view_config.list_view_fields];
+          if (data.configs.views) {
+            if (data.configs.views.list_view) {
+              selectedFields = [...data.configs.views.list_view];
+            }
+            if (data.configs.views.detail_view) {
+              selectedDetailFields = [...data.configs.views.detail_view];
+              console.log('Initial detail fields order:', selectedDetailFields);
+            }
           }
         }
       } else if (Array.isArray(data)) {
@@ -113,16 +127,16 @@ class FileManager {
       document.getElementById("configSection").classList.remove('hidden');
       document.getElementById("resultsSection").classList.add('hidden');
       document.getElementById("controlsSection").classList.add('hidden');      
-      const details = document.querySelector('#configSection details');
-      details.open = true;
-      navigation.goToMain();
+      const configSectionCollapsable = document.querySelector('#configSection details');
+      configSectionCollapsable.open = true;
+      navigation.showScreen("main");
     } catch (error) {
       console.error("File processing error:", error);
       alert(`Error processing file: ${error.message}`);
     } finally {
       this.hideLoading();
       //domElements.itemViewScreen.screen.classList.add('hidden');
-      hide(domElements.itemViewScreen.screen());
+      hide(dom.itemViewScreen.screen());
     }
   }
 
@@ -175,31 +189,49 @@ let fieldMap = { ...defaultFieldMap };
 
 let rawData = null;
 let activeItems = [];
-let allFields = [];
+let allFields = [];          // Will store fields in order of discovery
+let allFieldsSorted = [];    // Will store alphabetically sorted fields
 let selectedFields = [];
+let selectedDetailFields = []; // Add after existing variables
 
+// Update variables section
+// let rawData = null;
+// let activeItems = [];
+// let allFields = [];          // Will store fields in order of discovery
+// let allFieldsSorted = [];    // Will store alphabetically sorted fields
+// let selectedFields = [];
+// let selectedDetailFields = [];
+
+// Update extractAllFields function
 function extractAllFields() {
   const fieldSet = new Set();
+  const orderedFields = [];
+  
   rawData.forEach(item => {
-    collectFields(item, '', fieldSet);
+    collectFields(item, '', fieldSet, orderedFields);
   });
-  allFields = Array.from(fieldSet).sort();
+  
+  allFields = [...orderedFields];  // Maintain discovery order
+  allFieldsSorted = [...orderedFields].sort();  // Sorted copy for UI elements
 }
 
-function collectFields(obj, prefix, set) {
+// Update collectFields function
+function collectFields(obj, prefix, set, orderedFields) {
   for (const key in obj) {
     const path = prefix ? prefix + '.' + key : key;
     if (typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
-      collectFields(obj[key], path, set);
-    } else {
+      collectFields(obj[key], path, set, orderedFields);
+    } else if (!set.has(path)) {
       set.add(path);
+      orderedFields.push(path);  // Maintain order of discovery
     }
   }
 }
 
+// Update renderConfigUI function to use sorted fields for dropdowns
 function renderConfigUI() {
   const mapping = ['search', 'filter1', 'filter2', 'filter3', 'sort1', 'sort2'];
-  const container = document.getElementById("mappingControls");
+  const container = dom.mainScreen.mappingControls();
   container.innerHTML = '';
   
   mapping.forEach(role => {
@@ -212,32 +244,39 @@ function renderConfigUI() {
     const select = document.createElement("select");
     select.id = `map_${role}`;
     select.innerHTML = `<option value="">${labels.notUsed}</option>` + 
-      allFields.map(f => `<option value="${f}">${f}</option>`).join('');
+      allFieldsSorted.map(f => `<option value="${f}">${f}</option>`).join('');  // Use sorted fields
     
-    // Set the initial value based on fieldMap, checking if field exists in allFields
     const mappedField = fieldMap[role];
-    select.value = (mappedField === labels.notUsed || !allFields.includes(mappedField)) ? '' : mappedField;
+    select.value = (mappedField === labels.notUsed || !allFieldsSorted.includes(mappedField)) ? '' : mappedField;
     
     row.appendChild(label);
     row.appendChild(select);
     container.appendChild(row);
   });
 
-  // Update display field selector layout
-  const displayFieldSelector = document.getElementById("displayFieldSelector");
-  displayFieldSelector.innerHTML = '';
-  allFields.forEach(f => {
-    const div = document.createElement("div");
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = f;
-    checkbox.id = `chk_${f}`;
-    const label = document.createElement("label");
-    label.htmlFor = `chk_${f}`;
-    label.textContent = f;
-    div.appendChild(checkbox);
-    div.appendChild(label);
-    displayFieldSelector.appendChild(div);
+  // Create field selectors for both list and detail views
+  createFieldSelector(dom.mainScreen.displayFieldSelector(), selectedFields);
+  createFieldSelector(document.getElementById('displayFieldSelectorDetailView'), selectedDetailFields);
+}
+
+// Update updateDisplayFieldsSelection function
+function updateDisplayFieldsSelection() {
+  // Update list view checkboxes
+  const listContainer = dom.mainScreen.displayFieldSelector();
+  selectedFields.forEach(field => {
+    const checkbox = document.getElementById(`chk_${listContainer.id}_${field}`);
+    if (checkbox) {
+      checkbox.checked = true;
+    }
+  });
+
+  // Update detail view checkboxes
+  const detailContainer = document.getElementById('displayFieldSelectorDetailView');
+  selectedDetailFields.forEach(field => {
+    const checkbox = document.getElementById(`chk_${detailContainer.id}_${field}`);
+    if (checkbox) {
+      checkbox.checked = true;
+    }
   });
 }
 
@@ -251,13 +290,57 @@ function updateMappingControls() {
   });
 }
 
-function updateDisplayFieldsSelection() {
-  selectedFields.forEach(field => {
-    const checkbox = document.getElementById(`chk_${field}`);
-    if (checkbox) {
-      checkbox.checked = true;
-    }
-  });
+function createFieldSelector(container, selectedItems) {
+  container.innerHTML = '';
+  
+  // Use order-preserving logic for both detail and list views
+  if (container.id === 'displayFieldSelectorDetailView') {
+    // First render configured fields in their original order
+    selectedDetailFields.forEach(f => {
+      if (allFields.includes(f)) {
+        createFieldCheckbox(container, f, true);
+      }
+    });
+    
+    // Then add remaining fields
+    allFieldsSorted.forEach(f => {
+      if (!selectedDetailFields.includes(f)) {
+        createFieldCheckbox(container, f, false);
+      }
+    });
+  } else if (container.id === 'displayFieldSelector') {
+    // For list view, maintain original order
+    selectedFields.forEach(f => {
+      if (allFields.includes(f)) {
+        createFieldCheckbox(container, f, true);
+      }
+    });
+    
+    // Then add remaining fields
+    allFieldsSorted.forEach(f => {
+      if (!selectedFields.includes(f)) {
+        createFieldCheckbox(container, f, false);
+      }
+    });
+  }
+}
+
+function createFieldCheckbox(container, field, checked) {
+  const div = document.createElement("div");
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.value = field;
+  checkbox.id = `chk_${container.id}_${field}`;
+  checkbox.checked = checked;
+  checkbox.dataset.originalOrder = selectedDetailFields.indexOf(field);  // Store original position
+  
+  const label = document.createElement("label");
+  label.htmlFor = checkbox.id;
+  label.textContent = field;
+  
+  div.appendChild(checkbox);
+  div.appendChild(label);
+  container.appendChild(div);
 }
 
 function applyConfiguration() {
@@ -265,14 +348,25 @@ function applyConfiguration() {
   keys.forEach(k => {
     const sel = document.getElementById(`map_${k}`);
     const value = sel.value;
-    // Explicitly set notUsed for empty or invalid fields
     fieldMap[k] = value && allFields.includes(value) ? value : labels.notUsed;
   });
 
-  selectedFields = allFields.filter(f => {
-    const chk = document.getElementById(`chk_${f}`);
-    return chk.checked;
-  });
+  // Get selected fields for both views using original order
+  const listContainer = dom.mainScreen.displayFieldSelector();
+  const detailContainer = document.getElementById('displayFieldSelectorDetailView');
+  
+  selectedFields = getSelectedFieldsInOriginalOrder(listContainer);
+  selectedDetailFields = getSelectedFieldsInOriginalOrder(detailContainer);
+
+  // If no fields selected for detail view, use all fields
+  if (selectedDetailFields.length === 0) {
+    selectedDetailFields = [...allFields];
+  }
+
+  // If no fields selected for list view, use first field
+  if (selectedFields.length === 0) {
+    selectedFields = allFields.length ? [allFields[0]] : [];
+  }
 
   renderControls();
   document.getElementById("controlsSection").classList.remove('hidden');
@@ -280,6 +374,34 @@ function applyConfiguration() {
   filterAndDisplay();
   const details = document.querySelector('#configSection details');
   details.open = false;
+}
+
+function getSelectedFields(container) {
+  return allFields.filter(f => {
+    const chk = document.getElementById(`chk_${container.id}_${f}`);
+    return chk?.checked;
+  });
+}
+
+function getSelectedFieldsInOriginalOrder(container) {
+  if (container.id === 'displayFieldSelectorDetailView') {
+    // For detail view, follow original order
+    return selectedDetailFields.filter(field => {
+      const checkbox = document.getElementById(`chk_${container.id}_${field}`);
+      return checkbox?.checked;
+    });
+  } else if (container.id === 'displayFieldSelector') {
+    // For list view, follow original order
+    return selectedFields.filter(field => {
+      const checkbox = document.getElementById(`chk_${container.id}_${field}`);
+      return checkbox?.checked;
+    });
+  }
+  
+  // For other containers, use regular selection
+  return Array.from(container.querySelectorAll('input[type="checkbox"]'))
+    .filter(chk => chk.checked)
+    .map(chk => chk.value);
 }
 
 function renderControls() {
@@ -417,40 +539,17 @@ function renderResults(items) {
   });
 }
 
-// Add navigation controller
-const navigation = {
-  screens: {
-    main: document.getElementById('mainScreen'),
-    itemView: document.getElementById('itemViewScreen')
-  },
-
-  showScreen(screenId) {
-    Object.values(this.screens).forEach(screen => {
-      screen.classList.add('hidden');
-    });
-    this.screens[screenId].classList.remove('hidden');
-  },
-
-  goToMain() {
-    this.showScreen('main');
-  },
-
-  goToItemView() {
-    this.showScreen('itemView');
-  }
-};
-
 // Update viewItem function
 function viewItem(item) {
   const content = document.getElementById('itemViewContent');
   const title = document.getElementById('itemViewTitle');
   
   content.innerHTML = '';
+  title.textContent = ''; // Clear the title, leaving only back button
   
-  const titleField = selectedFields[0];
-  title.textContent = getByPath(item, titleField) || 'Item Details';
-  
-  allFields.forEach(field => {
+  console.log(selectedDetailFields);
+  // Use selectedDetailFields directly, maintaining the exact order from config
+  selectedDetailFields.forEach(field => {
     const value = getByPath(item, field);
     if (value !== undefined) {
       const fieldGroup = document.createElement('div');
@@ -470,7 +569,7 @@ function viewItem(item) {
     }
   });
   
-  navigation.goToItemView();
+  navigation.showScreen('itemView');
 }
 
 function debounce(fn, delay) {
