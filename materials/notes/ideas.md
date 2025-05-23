@@ -1,8 +1,6 @@
 # TODO:
-
-json db file
-- detail_view_fields ... show only fields listed here, apply the order from here (not alphabeticaly sorted)
-- list_view_fields ... show only fields listed here, apply the order from here (not alphabeticaly sorted)
+fix bugs:
+- if there are presets in db file's configs, and users selects some more fields to be display, it is not applied to view (list neither detail)
 
 tools
 - flashcards
